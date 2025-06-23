@@ -58,6 +58,10 @@ class FieldDataManager: ObservableObject {
     private let collectionInterval: TimeInterval = 0.5  // 每0.5秒采集一次
     private let movementThreshold: Double = 0.1  // 移动阈值，用于检测位置变化
     
+    // 磁场数据滤波
+    private var magneticFieldHistory: [FieldDataPoint.MagneticField] = []
+    private let maxHistorySize = 5  // 保留最近5个数据点进行平滑
+    
     init() {
         setupMotionManager()
     }
@@ -93,14 +97,23 @@ class FieldDataManager: ObservableObject {
             guard let self = self, let magnetometerData = data else { return }
             
             // 转换为微特斯拉 (μT)
-            let magneticField = FieldDataPoint.MagneticField(
+            let rawMagneticField = FieldDataPoint.MagneticField(
                 x: magnetometerData.magneticField.x,  // μT
                 y: magnetometerData.magneticField.y,
                 z: magnetometerData.magneticField.z
             )
             
+            // 添加到历史记录进行平滑处理
+            self.magneticFieldHistory.append(rawMagneticField)
+            if self.magneticFieldHistory.count > self.maxHistorySize {
+                self.magneticFieldHistory.removeFirst()
+            }
+            
+            // 计算平滑后的磁场数据
+            let smoothedMagneticField = self.smoothMagneticField()
+            
             DispatchQueue.main.async {
-                self.currentMagneticField = magneticField
+                self.currentMagneticField = smoothedMagneticField
             }
         }
         
@@ -185,11 +198,19 @@ class FieldDataManager: ObservableObject {
         
         let worldVector = rotationMatrix * deviceVector
         
-        return FieldDataPoint.MagneticField(
+        let worldMagneticField = FieldDataPoint.MagneticField(
             x: Double(worldVector.x),
             y: Double(worldVector.y),
             z: Double(worldVector.z)
         )
+        
+        // 添加调试信息
+        print("磁场转换 - 设备: (%.2f, %.2f, %.2f) μT, 模长: %.2f μT", 
+              deviceMagneticField.x, deviceMagneticField.y, deviceMagneticField.z, deviceMagneticField.magnitude)
+        print("磁场转换 - 世界: (%.2f, %.2f, %.2f) μT, 模长: %.2f μT", 
+              worldMagneticField.x, worldMagneticField.y, worldMagneticField.z, worldMagneticField.magnitude)
+        
+        return worldMagneticField
     }
     
     // MARK: - 模拟位置更新（作为后备方案）
@@ -249,6 +270,34 @@ class FieldDataManager: ObservableObject {
         } catch {
             print("导入数据失败: \(error)")
         }
+    }
+    
+    // MARK: - 磁场数据平滑处理
+    private func smoothMagneticField() -> FieldDataPoint.MagneticField {
+        guard !magneticFieldHistory.isEmpty else {
+            return FieldDataPoint.MagneticField(x: 0, y: 0, z: 0)
+        }
+        
+        // 使用加权平均，最新的数据权重更高
+        var totalWeight: Double = 0
+        var weightedSum = FieldDataPoint.MagneticField(x: 0, y: 0, z: 0)
+        
+        for (index, field) in magneticFieldHistory.enumerated() {
+            let weight = Double(index + 1) / Double(magneticFieldHistory.count)  // 权重从1/n到1
+            totalWeight += weight
+            
+            weightedSum = FieldDataPoint.MagneticField(
+                x: weightedSum.x + field.x * weight,
+                y: weightedSum.y + field.y * weight,
+                z: weightedSum.z + field.z * weight
+            )
+        }
+        
+        return FieldDataPoint.MagneticField(
+            x: weightedSum.x / totalWeight,
+            y: weightedSum.y / totalWeight,
+            z: weightedSum.z / totalWeight
+        )
     }
 }
 
