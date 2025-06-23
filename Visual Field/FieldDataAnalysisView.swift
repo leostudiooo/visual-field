@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import Foundation
 
 #if canImport(UIKit)
 import UIKit
@@ -28,6 +29,9 @@ struct FieldDataAnalysisView: View {
                     // 3D 磁场分量图表
                     if #available(iOS 16.0, *) {
                         ComponentsChartView(fieldData: fieldData, showWorldCoordinates: showWorldCoordinates)
+                        
+                        // 分离的三轴图表
+                        SeparatedComponentsChartView(fieldData: fieldData, showWorldCoordinates: showWorldCoordinates)
                     }
                     
                     // 数据点列表
@@ -187,44 +191,178 @@ struct ComponentsChartView: View {
     let showWorldCoordinates: Bool
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 15) {
             Text("磁场分量变化")
                 .font(.headline)
                 .foregroundColor(.primary)
             
-            Chart(fieldData.indices, id: \.self) { (index: Int) in
-                let dataPoint = fieldData[index]
-                let field = showWorldCoordinates ? dataPoint.worldMagneticField : dataPoint.magneticField
-                
-                LineMark(
-                    x: .value("时间", index),
-                    y: .value("X", field.x)
-                )
-                .foregroundStyle(.red)
-                .lineStyle(StrokeStyle(lineWidth: 2))
-                
-                LineMark(
-                    x: .value("时间", index),
-                    y: .value("Y", field.y)
-                )
-                .foregroundStyle(.green)
-                .lineStyle(StrokeStyle(lineWidth: 2))
-                
-                LineMark(
-                    x: .value("时间", index),
-                    y: .value("Z", field.z)
-                )
-                .foregroundStyle(.blue)
-                .lineStyle(StrokeStyle(lineWidth: 2))
+            // 使用新的数据结构来正确处理多轴数据
+            Chart {
+                ForEach(Array(fieldData.enumerated()), id: \.offset) { index, dataPoint in
+                    let field = showWorldCoordinates ? dataPoint.worldMagneticField : dataPoint.magneticField
+                    
+                    LineMark(
+                        x: .value("时间", index),
+                        y: .value("磁场强度", field.x),
+                        series: .value("轴", "X轴")
+                    )
+                    .foregroundStyle(.red)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                    
+                    LineMark(
+                        x: .value("时间", index),
+                        y: .value("磁场强度", field.y),
+                        series: .value("轴", "Y轴")
+                    )
+                    .foregroundStyle(.green)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                    
+                    LineMark(
+                        x: .value("时间", index),
+                        y: .value("磁场强度", field.z),
+                        series: .value("轴", "Z轴")
+                    )
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
             }
             .frame(height: 200)
             .chartYAxisLabel("磁场强度 (μT)")
             .chartXAxisLabel("数据点序号")
             .chartForegroundStyleScale([
-                "X": .red,
-                "Y": .green, 
-                "Z": .blue
+                "X轴": .red,
+                "Y轴": .green, 
+                "Z轴": .blue
             ])
+            .chartLegend(position: .bottom, alignment: .center)
+            
+            // 添加图例说明
+            HStack(spacing: 20) {
+                LegendItem(color: .red, label: "X轴")
+                LegendItem(color: .green, label: "Y轴")
+                LegendItem(color: .blue, label: "Z轴")
+            }
+            .padding(.top, 5)
+        }
+        .padding()
+        #if canImport(UIKit)
+        .background(Color(UIColor.systemBackground))
+        #else
+        .background(Color.white)
+        #endif
+        .cornerRadius(12)
+        .shadow(color: .gray.opacity(0.2), radius: 5, x: 0, y: 2)
+    }
+}
+
+struct LegendItem: View {
+    let color: Color
+    let label: String
+    
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.primary)
+        }
+    }
+}
+
+@available(iOS 16.0, *)
+struct SeparatedComponentsChartView: View {
+    let fieldData: [FieldDataPoint]
+    let showWorldCoordinates: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            Text("磁场分量分离图表")
+                .font(.headline)
+                .foregroundColor(.primary)
+            
+            // X轴分量
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Circle()
+                        .fill(.red)
+                        .frame(width: 12, height: 12)
+                    Text("X轴分量")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                
+                Chart {
+                    ForEach(Array(fieldData.enumerated()), id: \.offset) { index, dataPoint in
+                        let field = showWorldCoordinates ? dataPoint.worldMagneticField : dataPoint.magneticField
+                        
+                        LineMark(
+                            x: .value("时间", index),
+                            y: .value("X分量", field.x)
+                        )
+                        .foregroundStyle(.red)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
+                }
+                .frame(height: 120)
+                .chartYAxisLabel("X (μT)")
+            }
+            
+            // Y轴分量
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 12, height: 12)
+                    Text("Y轴分量")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                
+                Chart {
+                    ForEach(Array(fieldData.enumerated()), id: \.offset) { index, dataPoint in
+                        let field = showWorldCoordinates ? dataPoint.worldMagneticField : dataPoint.magneticField
+                        
+                        LineMark(
+                            x: .value("时间", index),
+                            y: .value("Y分量", field.y)
+                        )
+                        .foregroundStyle(.green)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
+                }
+                .frame(height: 120)
+                .chartYAxisLabel("Y (μT)")
+            }
+            
+            // Z轴分量
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Circle()
+                        .fill(.blue)
+                        .frame(width: 12, height: 12)
+                    Text("Z轴分量")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                
+                Chart {
+                    ForEach(Array(fieldData.enumerated()), id: \.offset) { index, dataPoint in
+                        let field = showWorldCoordinates ? dataPoint.worldMagneticField : dataPoint.magneticField
+                        
+                        LineMark(
+                            x: .value("时间", index),
+                            y: .value("Z分量", field.z)
+                        )
+                        .foregroundStyle(.blue)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
+                }
+                .frame(height: 120)
+                .chartYAxisLabel("Z (μT)")
+                .chartXAxisLabel("数据点序号")
+            }
         }
         .padding()
         #if canImport(UIKit)
