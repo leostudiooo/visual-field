@@ -1,6 +1,7 @@
 import Foundation
 import CoreMotion
 import CoreLocation
+import ARKit
 
 // MARK: - 磁场数据点结构
 struct FieldDataPoint: Identifiable, Codable {
@@ -48,6 +49,10 @@ class FieldDataManager: ObservableObject {
     private let motionManager = CMMotionManager()
     private var currentPosition = FieldDataPoint.Position(x: 0, y: 0, z: 0)
     private var collectionTimer: Timer?
+    
+    // AR 会话引用，用于获取真实的设备位置和方向
+    weak var arSession: ARSession?
+    private var currentDeviceTransform = matrix_identity_float4x4
     
     // 采集参数
     private let collectionInterval: TimeInterval = 0.5  // 每0.5秒采集一次
@@ -123,13 +128,16 @@ class FieldDataManager: ObservableObject {
     private func collectDataPoint() {
         guard let magneticField = currentMagneticField else { return }
         
-        // 模拟位置变化（实际应用中应该使用 ARKit 或其他定位技术）
-        updateCurrentPosition()
+        // 从 AR 会话获取真实的设备位置和方向
+        updateCurrentPositionFromAR()
+        
+        // 将设备坐标系下的磁场矢量转换到世界坐标系
+        let worldMagneticField = transformMagneticFieldToWorld(magneticField)
         
         let dataPoint = FieldDataPoint(
             timestamp: Date(),
             position: currentPosition,
-            magneticField: magneticField
+            magneticField: worldMagneticField
         )
         
         DispatchQueue.main.async {
@@ -137,8 +145,55 @@ class FieldDataManager: ObservableObject {
         }
     }
     
-    // MARK: - 更新当前位置
-    private func updateCurrentPosition() {
+    // MARK: - 从 AR 会话更新当前位置
+    private func updateCurrentPositionFromAR() {
+        guard let arSession = arSession,
+              let currentFrame = arSession.currentFrame else {
+            // 如果 AR 不可用，使用模拟位置
+            updateCurrentPositionSimulated()
+            return
+        }
+        
+        // 获取设备在世界坐标系中的变换矩阵
+        let cameraTransform = currentFrame.camera.transform
+        currentDeviceTransform = cameraTransform
+        
+        // 提取位置
+        let position = cameraTransform.columns.3
+        currentPosition = FieldDataPoint.Position(
+            x: Double(position.x),
+            y: Double(position.y),
+            z: Double(position.z)
+        )
+    }
+    
+    // MARK: - 将磁场矢量从设备坐标系转换到世界坐标系
+    private func transformMagneticFieldToWorld(_ deviceMagneticField: FieldDataPoint.MagneticField) -> FieldDataPoint.MagneticField {
+        // 设备坐标系下的磁场矢量
+        let deviceVector = SIMD3<Float>(
+            Float(deviceMagneticField.x),
+            Float(deviceMagneticField.y),
+            Float(deviceMagneticField.z)
+        )
+        
+        // 使用设备变换矩阵的旋转部分转换矢量
+        let rotationMatrix = matrix_float3x3(
+            currentDeviceTransform.columns.0.xyz,
+            currentDeviceTransform.columns.1.xyz,
+            currentDeviceTransform.columns.2.xyz
+        )
+        
+        let worldVector = rotationMatrix * deviceVector
+        
+        return FieldDataPoint.MagneticField(
+            x: Double(worldVector.x),
+            y: Double(worldVector.y),
+            z: Double(worldVector.z)
+        )
+    }
+    
+    // MARK: - 模拟位置更新（作为后备方案）
+    private func updateCurrentPositionSimulated() {
         // 这里是简化的位置更新逻辑
         // 实际应用中应该集成 ARKit 来获取精确的 3D 位置
         let timeOffset = Date().timeIntervalSince1970
@@ -194,5 +249,12 @@ class FieldDataManager: ObservableObject {
         } catch {
             print("导入数据失败: \(error)")
         }
+    }
+}
+
+// MARK: - SIMD 扩展
+extension SIMD4 where Scalar == Float {
+    var xyz: SIMD3<Float> {
+        return SIMD3<Float>(x, y, z)
     }
 }

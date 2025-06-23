@@ -12,137 +12,123 @@ struct ContentView: View {
             ARFieldRealTimeView(fieldDataManager: fieldDataManager)
                 .ignoresSafeArea()
             
-            // 数据展示叠层
+            // 数据展示叠层 - 移到右下角
             VStack {
                 Spacer()
                 
-                // 根据状态显示不同内容
-                if fieldDataManager.isCollecting {
-                    // 正在采集状态
-                    VStack(spacing: 20) {
-                        Text("正在采集磁场数据...")
-                            .font(.title2)
-                            .foregroundColor(.white)
-                            .shadow(color: .black, radius: 2)
-                        
-                        if let currentReading = fieldDataManager.currentMagneticField {
-                            VStack(spacing: 10) {
-                                Text("当前磁场强度")
+                HStack {
+                    Spacer()
+                    
+                    // 根据状态显示不同内容
+                    VStack {
+                        if fieldDataManager.isCollecting {
+                            // 正在采集状态
+                            VStack(spacing: 15) {
+                                Text("采集中...")
                                     .font(.headline)
                                     .foregroundColor(.white)
                                     .shadow(color: .black, radius: 2)
                                 
-                                HStack(spacing: 20) {
-                                    VStack {
-                                        Text("X")
+                                if let currentReading = fieldDataManager.currentMagneticField {
+                                    VStack(spacing: 8) {
+                                        Text("磁场强度")
                                             .font(.caption)
-                                            .foregroundColor(.red)
-                                        Text(String(format: "%.2f", currentReading.x))
-                                            .font(.title3)
-                                            .foregroundColor(.red)
-                                    }
-                                    
-                                    VStack {
-                                        Text("Y")
-                                            .font(.caption)
-                                            .foregroundColor(.green)
-                                        Text(String(format: "%.2f", currentReading.y))
-                                            .font(.title3)
-                                            .foregroundColor(.green)
-                                    }
-                                    
-                                    VStack {
-                                        Text("Z")
-                                            .font(.caption)
-                                            .foregroundColor(.blue)
-                                        Text(String(format: "%.2f", currentReading.z))
-                                            .font(.title3)
-                                            .foregroundColor(.blue)
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black, radius: 2)
+                                        
+                                        HStack(spacing: 15) {
+                                            VStack {
+                                                Text("X")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.red)
+                                                Text(String(format: "%.1f", currentReading.x))
+                                                    .font(.caption)
+                                                    .foregroundColor(.red)
+                                            }
+                                            
+                                            VStack {
+                                                Text("Y")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.green)
+                                                Text(String(format: "%.1f", currentReading.y))
+                                                    .font(.caption)
+                                                    .foregroundColor(.green)
+                                            }
+                                            
+                                            VStack {
+                                                Text("Z")
+                                                    .font(.caption2)
+                                                    .foregroundColor(.blue)
+                                                Text(String(format: "%.1f", currentReading.z))
+                                                    .font(.caption)
+                                                    .foregroundColor(.blue)
+                                            }
+                                        }
+                                        
+                                        Text("μT")
+                                            .font(.caption2)
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black, radius: 2)
                                     }
                                 }
                                 
-                                Text("μT")
+                                Text("数据点: \(fieldDataManager.collectedData.count)")
                                     .font(.caption)
                                     .foregroundColor(.white)
                                     .shadow(color: .black, radius: 2)
                             }
-                            .padding()
-                            .background(Color.black.opacity(0.6))
-                            .cornerRadius(10)
-                        }
-                        
-                        Text("已采集: \(fieldDataManager.collectedData.count) 个数据点")
-                            .font(.subheadline)
-                            .foregroundColor(.white)
-                            .shadow(color: .black, radius: 2)
-                    }
-                    .padding()
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(10)
-                    
-                } else if fieldDataManager.collectedData.isEmpty {
-                    // 初始状态
-                    VStack(spacing: 20) {
-                        Image(systemName: "location.magnifyingglass")
-                            .font(.system(size: 60))
-                            .foregroundColor(.white)
-                            .shadow(color: .black, radius: 3)
-                        
-                        Text("Visual Field")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .shadow(color: .black, radius: 3)
-                        
-                        Text("点击开始按钮采集空间磁场数据")
-                            .font(.subheadline)
-                            .foregroundColor(.white)
-                            .shadow(color: .black, radius: 2)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(15)
-                    
-                } else {
-                    // 采集完成状态
-                    VStack(spacing: 20) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.green)
-                            .shadow(color: .black, radius: 3)
-                        
-                        Text("采集完成")
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .shadow(color: .black, radius: 3)
-                        
-                        Text("共采集了 \(fieldDataManager.collectedData.count) 个磁场数据点")
-                            .font(.subheadline)
-                            .foregroundColor(.white)
-                            .shadow(color: .black, radius: 2)
-                        
-                        Button(action: {
-                            showingAnalysis = true
-                        }) {
-                            HStack {
-                                Image(systemName: "chart.line.uptrend.xyaxis")
-                                Text("数据分析")
+                            .padding(12)
+                            .background(Color.black.opacity(0.7))
+                            .cornerRadius(8)
+                            .frame(maxWidth: 180)
+                            
+                        } else if fieldDataManager.collectedData.isEmpty {
+                            // 初始状态 - 不显示，让用户专注于AR
+                            EmptyView()
+                            
+                        } else {
+                            // 采集完成状态
+                            VStack(spacing: 12) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 30))
+                                    .foregroundColor(.green)
+                                    .shadow(color: .black, radius: 2)
+                                
+                                Text("采集完成")
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black, radius: 2)
+                                
+                                Text("\(fieldDataManager.collectedData.count) 个数据点")
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black, radius: 2)
+                                
+                                Button(action: {
+                                    showingAnalysis = true
+                                }) {
+                                    HStack {
+                                        Image(systemName: "chart.line.uptrend.xyaxis")
+                                        Text("分析")
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.green.opacity(0.8))
+                                    .cornerRadius(6)
+                                }
                             }
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .padding()
-                            .background(Color.green.opacity(0.8))
-                            .cornerRadius(10)
+                            .padding(12)
+                            .background(Color.black.opacity(0.7))
+                            .cornerRadius(8)
+                            .frame(maxWidth: 180)
                         }
                     }
-                    .padding()
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(15)
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 120) // 避免与底部控制栏重叠
                 }
-                
-                Spacer()
             }
             
             // 控制层
