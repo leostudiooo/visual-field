@@ -381,7 +381,9 @@ struct ARFieldRealTimeView: UIViewRepresentable {
         arView.session.run(config)
         
         // 连接 AR 会话到 FieldDataManager
+        #if canImport(ARKit) && os(iOS)
         fieldDataManager.arSession = arView.session
+        #endif
         
         // 存储 ARView 的引用
         context.coordinator.arView = arView
@@ -489,14 +491,21 @@ struct ARFieldRealTimeView: UIViewRepresentable {
         
         private func createMagneticFieldArrow(for dataPoint: FieldDataPoint, index: Int) -> ModelEntity {
             // 创建带有箭头头部的完整箭头
-            let arrowEntity = createArrowWithHead(field: dataPoint.magneticField)
+            let arrowEntity = createArrowWithHead(field: dataPoint.worldMagneticField)  // 使用世界坐标系磁场
             
             // 箭头位置设为原点，因为已经通过锚点定位到正确的空间位置
             arrowEntity.position = SIMD3<Float>(0, 0, 0)
-                 // 设置旋转以指向磁场方向（世界坐标系下的方向）
-        let fieldDirection = dataPoint.magneticField.normalized
-        let rotation = calculateRotationFromMagnitude(for: fieldDirection)
+            
+            // 设置旋转以指向磁场方向（世界坐标系下的方向）
+            let fieldDirection = dataPoint.worldMagneticField.normalized  // 使用世界坐标系磁场方向
+            let rotation = calculateRotationFromMagnitude(for: fieldDirection)
             arrowEntity.orientation = rotation
+            
+            // 调试输出
+            let deviceField = dataPoint.magneticField
+            let worldField = dataPoint.worldMagneticField
+            print("箭头 #\(index): 设备磁场(\(deviceField.x), \(deviceField.y), \(deviceField.z)) -> " +
+                  "世界磁场(\(worldField.x), \(worldField.y), \(worldField.z))")
             
             return arrowEntity
         }

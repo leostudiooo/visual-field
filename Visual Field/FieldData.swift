@@ -1,21 +1,19 @@
 import Foundation
 import CoreMotion
 import CoreLocation
+import simd
+
+#if canImport(ARKit)
 import ARKit
+#endif
 
 // MARK: - 磁场数据点结构
 struct FieldDataPoint: Identifiable, Codable {
-    let id = UUID()
+    var id = UUID()
     let timestamp: Date
     let position: Position
     let magneticField: MagneticField
-    
-    // 自定义编码键，排除 id 属性
-    enum CodingKeys: String, CodingKey {
-        case timestamp
-        case position
-        case magneticField
-    }
+    let deviceOrientation: DeviceOrientation?  // 设备方向信息，用于坐标转换
     
     struct Position: Codable {
         let x: Double
@@ -38,6 +36,29 @@ struct FieldDataPoint: Identifiable, Codable {
             return MagneticField(x: x / mag, y: y / mag, z: z / mag)
         }
     }
+    
+    struct DeviceOrientation: Codable {
+        let quaternion: [Double]  // 四元数 [x, y, z, w]
+        let matrix: [Double]      // 3x3旋转矩阵，用于磁场矢量转换
+    }
+    
+    // 将设备坐标系的磁场矢量转换到世界坐标系
+    var worldMagneticField: MagneticField {
+        guard let orientation = deviceOrientation else {
+            return magneticField  // 没有设备方向信息，返回原始数据
+        }
+        
+        // 使用旋转矩阵转换磁场矢量
+        let matrix = orientation.matrix
+        let deviceField = SIMD3<Double>(magneticField.x, magneticField.y, magneticField.z)
+        
+        // 应用旋转矩阵 (3x3)
+        let worldX = matrix[0] * deviceField.x + matrix[1] * deviceField.y + matrix[2] * deviceField.z
+        let worldY = matrix[3] * deviceField.x + matrix[4] * deviceField.y + matrix[5] * deviceField.z  
+        let worldZ = matrix[6] * deviceField.x + matrix[7] * deviceField.y + matrix[8] * deviceField.z
+        
+        return MagneticField(x: worldX, y: worldY, z: worldZ)
+    }
 }
 
 // MARK: - 磁场数据管理器
@@ -46,24 +67,30 @@ class FieldDataManager: ObservableObject {
     @Published var collectedData: [FieldDataPoint] = []
     @Published var currentMagneticField: FieldDataPoint.MagneticField?
     
+    #if os(iOS)
     private let motionManager = CMMotionManager()
+    #endif
+    
+    #if canImport(ARKit) && os(iOS)
+    var arSession: ARSession?
+    #endif
+    
     private var currentPosition = FieldDataPoint.Position(x: 0, y: 0, z: 0)
     private var collectionTimer: Timer?
-    
-    // AR 会话引用，用于获取真实的设备位置和方向
-    weak var arSession: ARSession?
-    private var currentDeviceTransform = matrix_identity_float4x4
+    private var lastMagneticField: FieldDataPoint.MagneticField?
     
     // 采集参数
     private let collectionInterval: TimeInterval = 0.5  // 每0.5秒采集一次
     private let movementThreshold: Double = 0.1  // 移动阈值，用于检测位置变化
     
-    // 磁场数据滤波
-    private var magneticFieldHistory: [FieldDataPoint.MagneticField] = []
-    private let maxHistorySize = 5  // 保留最近5个数据点进行平滑
+    // 数据平滑参数
+    private let smoothingFactor: Double = 0.3
+    private var smoothedField: FieldDataPoint.MagneticField?
     
     init() {
+        #if os(iOS)
         setupMotionManager()
+        #endif
     }
     
     deinit {
@@ -72,11 +99,11 @@ class FieldDataManager: ObservableObject {
     
     // MARK: - 权限请求
     func requestPermissions() {
-        // 这里可以添加位置权限请求等
         print("请求传感器权限...")
     }
     
     // MARK: - 运动管理器设置
+    #if os(iOS)
     private func setupMotionManager() {
         guard motionManager.isMagnetometerAvailable else {
             print("磁力计不可用")
@@ -84,7 +111,9 @@ class FieldDataManager: ObservableObject {
         }
         
         motionManager.magnetometerUpdateInterval = 0.1  // 100ms 更新间隔
+        motionManager.deviceMotionUpdateInterval = 0.1  // 同时启用设备运动更新
     }
+    #endif
     
     // MARK: - 开始采集
     func startCollecting() {
@@ -92,30 +121,9 @@ class FieldDataManager: ObservableObject {
         
         isCollecting = true
         
-        // 开始磁力计更新
-        motionManager.startMagnetometerUpdates(to: .main) { [weak self] (data, error) in
-            guard let self = self, let magnetometerData = data else { return }
-            
-            // 转换为微特斯拉 (μT)
-            let rawMagneticField = FieldDataPoint.MagneticField(
-                x: magnetometerData.magneticField.x,  // μT
-                y: magnetometerData.magneticField.y,
-                z: magnetometerData.magneticField.z
-            )
-            
-            // 添加到历史记录进行平滑处理
-            self.magneticFieldHistory.append(rawMagneticField)
-            if self.magneticFieldHistory.count > self.maxHistorySize {
-                self.magneticFieldHistory.removeFirst()
-            }
-            
-            // 计算平滑后的磁场数据
-            let smoothedMagneticField = self.smoothMagneticField()
-            
-            DispatchQueue.main.async {
-                self.currentMagneticField = smoothedMagneticField
-            }
-        }
+        #if os(iOS)
+        startMotionUpdates()
+        #endif
         
         // 开始定时采集数据点
         collectionTimer = Timer.scheduledTimer(withTimeInterval: collectionInterval, repeats: true) { [weak self] _ in
@@ -125,12 +133,96 @@ class FieldDataManager: ObservableObject {
         print("开始磁场数据采集")
     }
     
+    #if os(iOS)
+    private func startMotionUpdates() {
+        // 启动磁力计更新
+        motionManager.startMagnetometerUpdates(to: .main) { [weak self] (data, error) in
+            guard let self = self, let magnetometerData = data else { return }
+            
+            // CMMagnetometerData.magneticField 的单位已经是微特斯拉 (μT)，无需转换
+            let rawField = FieldDataPoint.MagneticField(
+                x: magnetometerData.magneticField.x,
+                y: magnetometerData.magneticField.y,
+                z: magnetometerData.magneticField.z
+            )
+            
+            // 应用数据平滑
+            let smoothed = self.applySmoothingFilter(to: rawField)
+            
+            DispatchQueue.main.async {
+                self.currentMagneticField = smoothed
+            }
+        }
+        
+        // 启动设备运动更新以获取方向信息
+        motionManager.startDeviceMotionUpdates(using: .xMagneticNorthZVertical, to: .main) { [weak self] (motion, error) in
+            guard let self = self, let deviceMotion = motion else { return }
+            
+            // 获取设备相对于世界坐标系的方向
+            let attitude = deviceMotion.attitude
+            self.updateDeviceOrientation(from: attitude)
+        }
+    }
+    #endif
+    
+    // MARK: - 数据平滑处理
+    private func applySmoothingFilter(to field: FieldDataPoint.MagneticField) -> FieldDataPoint.MagneticField {
+        guard let previous = smoothedField else {
+            smoothedField = field
+            return field
+        }
+        
+        // 指数平滑滤波
+        let smoothed = FieldDataPoint.MagneticField(
+            x: previous.x * (1 - smoothingFactor) + field.x * smoothingFactor,
+            y: previous.y * (1 - smoothingFactor) + field.y * smoothingFactor,
+            z: previous.z * (1 - smoothingFactor) + field.z * smoothingFactor
+        )
+        
+        smoothedField = smoothed
+        return smoothed
+    }
+    
+    private var currentDeviceOrientation: FieldDataPoint.DeviceOrientation?
+    
+    #if os(iOS)
+    private func updateDeviceOrientation(from attitude: CMAttitude) {
+        // 获取旋转矩阵
+        let rotationMatrix = attitude.rotationMatrix
+        
+        // 将CMRotationMatrix转换为数组格式 (行优先存储)
+        let matrix = [
+            rotationMatrix.m11, rotationMatrix.m12, rotationMatrix.m13,
+            rotationMatrix.m21, rotationMatrix.m22, rotationMatrix.m23,
+            rotationMatrix.m31, rotationMatrix.m32, rotationMatrix.m33
+        ]
+        
+        // 获取四元数
+        let quaternion = [
+            attitude.quaternion.x,
+            attitude.quaternion.y, 
+            attitude.quaternion.z,
+            attitude.quaternion.w
+        ]
+        
+        currentDeviceOrientation = FieldDataPoint.DeviceOrientation(
+            quaternion: quaternion,
+            matrix: matrix
+        )
+    }
+    #endif
+    
     // MARK: - 停止采集
     func stopCollecting() {
         guard isCollecting else { return }
         
         isCollecting = false
+        
+        #if os(iOS)
         motionManager.stopMagnetometerUpdates()
+        motionManager.stopDeviceMotionUpdates()
+        #endif
+        
         collectionTimer?.invalidate()
         collectionTimer = nil
         
@@ -141,87 +233,61 @@ class FieldDataManager: ObservableObject {
     private func collectDataPoint() {
         guard let magneticField = currentMagneticField else { return }
         
-        // 从 AR 会话获取真实的设备位置和方向
-        updateCurrentPositionFromAR()
-        
-        // 将设备坐标系下的磁场矢量转换到世界坐标系
-        let worldMagneticField = transformMagneticFieldToWorld(magneticField)
+        // 更新位置信息
+        updateCurrentPosition()
         
         let dataPoint = FieldDataPoint(
             timestamp: Date(),
             position: currentPosition,
-            magneticField: worldMagneticField
+            magneticField: magneticField,
+            deviceOrientation: currentDeviceOrientation
         )
         
         DispatchQueue.main.async {
             self.collectedData.append(dataPoint)
-        }
-    }
-    
-    // MARK: - 从 AR 会话更新当前位置
-    private func updateCurrentPositionFromAR() {
-        guard let arSession = arSession,
-              let currentFrame = arSession.currentFrame else {
-            // 如果 AR 不可用，使用模拟位置
-            updateCurrentPositionSimulated()
-            return
+            
+            // 性能优化：限制数据点数量
+            if self.collectedData.count > 1000 {
+                self.collectedData.removeFirst(100)  // 移除最老的100个点
+            }
         }
         
-        // 获取设备在世界坐标系中的变换矩阵
-        let cameraTransform = currentFrame.camera.transform
-        currentDeviceTransform = cameraTransform
-        
-        // 提取位置
-        let position = cameraTransform.columns.3
-        currentPosition = FieldDataPoint.Position(
-            x: Double(position.x),
-            y: Double(position.y),
-            z: Double(position.z)
-        )
+        print("采集数据点: 位置(\(currentPosition.x), \(currentPosition.y), \(currentPosition.z)), " +
+              "磁场模长: \(magneticField.magnitude) μT, " +
+              "世界坐标磁场模长: \(dataPoint.worldMagneticField.magnitude) μT")
     }
     
-    // MARK: - 将磁场矢量从设备坐标系转换到世界坐标系
-    private func transformMagneticFieldToWorld(_ deviceMagneticField: FieldDataPoint.MagneticField) -> FieldDataPoint.MagneticField {
-        // 设备坐标系下的磁场矢量
-        let deviceVector = SIMD3<Float>(
-            Float(deviceMagneticField.x),
-            Float(deviceMagneticField.y),
-            Float(deviceMagneticField.z)
-        )
-        
-        // 使用设备变换矩阵的旋转部分转换矢量
-        let rotationMatrix = matrix_float3x3(
-            currentDeviceTransform.columns.0.xyz,
-            currentDeviceTransform.columns.1.xyz,
-            currentDeviceTransform.columns.2.xyz
-        )
-        
-        let worldVector = rotationMatrix * deviceVector
-        
-        let worldMagneticField = FieldDataPoint.MagneticField(
-            x: Double(worldVector.x),
-            y: Double(worldVector.y),
-            z: Double(worldVector.z)
-        )
-        
-        // 添加调试信息
-        print("磁场转换 - 设备: (%.2f, %.2f, %.2f) μT, 模长: %.2f μT", 
-              deviceMagneticField.x, deviceMagneticField.y, deviceMagneticField.z, deviceMagneticField.magnitude)
-        print("磁场转换 - 世界: (%.2f, %.2f, %.2f) μT, 模长: %.2f μT", 
-              worldMagneticField.x, worldMagneticField.y, worldMagneticField.z, worldMagneticField.magnitude)
-        
-        return worldMagneticField
+    // MARK: - 更新当前位置
+    private func updateCurrentPosition() {
+        #if canImport(ARKit) && os(iOS)
+        // 如果有ARKit会话，使用真实的相机位置
+        if let arSession = arSession,
+           let currentFrame = arSession.currentFrame {
+            let cameraTransform = currentFrame.camera.transform
+            let position = cameraTransform.columns.3  // 提取位置向量
+            
+            currentPosition = FieldDataPoint.Position(
+                x: Double(position.x),
+                y: Double(position.y),
+                z: Double(position.z)
+            )
+        } else {
+            // 后备方案：使用模拟位置
+            simulatePositionUpdate()
+        }
+        #else
+        // 非iOS平台或ARKit不可用时的后备方案
+        simulatePositionUpdate()
+        #endif
     }
     
-    // MARK: - 模拟位置更新（作为后备方案）
-    private func updateCurrentPositionSimulated() {
-        // 这里是简化的位置更新逻辑
-        // 实际应用中应该集成 ARKit 来获取精确的 3D 位置
+    private func simulatePositionUpdate() {
+        // 模拟位置变化用于测试
         let timeOffset = Date().timeIntervalSince1970
         currentPosition = FieldDataPoint.Position(
-            x: sin(timeOffset * 0.1) * 2.0,  // 模拟 X 轴移动
-            y: 0.0,                          // Y 轴固定
-            z: cos(timeOffset * 0.1) * 2.0   // 模拟 Z 轴移动
+            x: sin(timeOffset * 0.1) * 2.0,
+            y: 0.5,  // 稍微抬高避免与地面重叠
+            z: cos(timeOffset * 0.1) * 2.0
         )
     }
     
@@ -270,40 +336,5 @@ class FieldDataManager: ObservableObject {
         } catch {
             print("导入数据失败: \(error)")
         }
-    }
-    
-    // MARK: - 磁场数据平滑处理
-    private func smoothMagneticField() -> FieldDataPoint.MagneticField {
-        guard !magneticFieldHistory.isEmpty else {
-            return FieldDataPoint.MagneticField(x: 0, y: 0, z: 0)
-        }
-        
-        // 使用加权平均，最新的数据权重更高
-        var totalWeight: Double = 0
-        var weightedSum = FieldDataPoint.MagneticField(x: 0, y: 0, z: 0)
-        
-        for (index, field) in magneticFieldHistory.enumerated() {
-            let weight = Double(index + 1) / Double(magneticFieldHistory.count)  // 权重从1/n到1
-            totalWeight += weight
-            
-            weightedSum = FieldDataPoint.MagneticField(
-                x: weightedSum.x + field.x * weight,
-                y: weightedSum.y + field.y * weight,
-                z: weightedSum.z + field.z * weight
-            )
-        }
-        
-        return FieldDataPoint.MagneticField(
-            x: weightedSum.x / totalWeight,
-            y: weightedSum.y / totalWeight,
-            z: weightedSum.z / totalWeight
-        )
-    }
-}
-
-// MARK: - SIMD 扩展
-extension SIMD4 where Scalar == Float {
-    var xyz: SIMD3<Float> {
-        return SIMD3<Float>(x, y, z)
     }
 }

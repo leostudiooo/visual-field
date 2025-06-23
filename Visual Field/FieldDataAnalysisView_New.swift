@@ -301,7 +301,7 @@ struct DataPointRowView: View {
                                dataPoint.position.y, 
                                dataPoint.position.z))
                         .font(.caption)
-                        .font(.system(.caption, design: .monospaced))
+                        .fontFamily(.monospaced)
                 }
                 
                 Spacer()
@@ -314,7 +314,7 @@ struct DataPointRowView: View {
                     Text(String(format: "(%.1f, %.1f, %.1f)", 
                                field.x, field.y, field.z))
                         .font(.caption)
-                        .font(.system(.caption, design: .monospaced))
+                        .fontFamily(.monospaced)
                 }
             }
         }
