@@ -11,4 +11,10 @@
 - **iOS版本**: iOS 14.0+
 - **设备要求**: 支持ARKit的iPhone/iPad
 
+## 运行截图
+
+![采集和预览](https://github.com/user-attachments/assets/5f63f045-4352-4a3f-9ff6-cba9130fc4ee)
+
+![数据分析](https://github.com/user-attachments/assets/48c99d1e-fe96-476c-9804-670c65cc1a06)
+
 **注意**: 此应用需要在真实的iOS设备上运行以获取准确的磁力计数据。模拟器无法提供真实的传感器数据。
